@@ -24,6 +24,9 @@ func init() {
 }
 
 func main() {
+	//需要设置一下GO111MODULE
+	os.Setenv("GO111MODULE", "on")
+
 	gpEnv := os.Getenv("GOPATH")
 	if gpEnv == "" {
 		panic("can not find $GOPATH")
