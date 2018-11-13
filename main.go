@@ -35,6 +35,9 @@ func main() {
 		fmt.Fprintf(os.Stdout, "goproxy: %s cache dir is not exist. %s\n", time.Now().Format("2006-01-02 15:04:05"), cacheDir)
 		//os.MkdirAll(cacheDir, 0644)
 	}
+	//一定要GOPROXY设置为空
+	os.Setenv("GOPROXY", "")
+
 	http.Handle("/", mainHandler(http.FileServer(http.Dir(cacheDir))))
 	err := http.ListenAndServe(listen, nil)
 	if nil != err {
