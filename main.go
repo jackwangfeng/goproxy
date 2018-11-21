@@ -85,6 +85,17 @@ func main() {
 		gopath = confData.GoPath
 		os.Setenv("GOPATH", gopath)
 	}
+	for o, d := range confData.MirrorMap {
+		o1 := filepath.Join(gopath, "pkg", "mod", o)
+		d1 := filepath.Join(gopath, "pkg", "mod", d)
+		if _, err := os.Stat(d1); err != nil && os.IsNotExist(err) {
+			os.MkdirAll(d1, 0755)
+		}
+		if _, err := os.Stat(o1); err != nil && os.IsNotExist(err) {
+			os.Link(o1, d1)
+		}
+	}
+
 	//gopath如果没有建一个
 	if _, err := os.Stat(gopath); os.IsNotExist(err) {
 		os.MkdirAll(gopath, 0755)
@@ -212,12 +223,6 @@ func goGet(path, version, suffix string, w http.ResponseWriter, r *http.Request)
 			url := fmt.Sprintf("%s//%s/%s", scheme, h, p)
 			http.Redirect(w, r, url, 302)
 		}
-	}
-	if strings.Compare(rPath, path) != 0 {
-		r1 := filepath.Join(confData.GoPath, "pkg", "mod", rPath)
-		d1 := filepath.Join(confData.GoPath, "pkg", "mod", path)
-		os.Link(r1, d1)
-		fmt.Fprintf(os.Stdout, "link dir  %s -->  %s\n", r1, d1)
 	}
 	return nil
 }
