@@ -17,15 +17,18 @@ import (
 )
 
 var cacheDir string
-var listen string
-var config_file string
-var go_path string
+var configFile string
 
-var mirror_map map[string]interface{}
+type confStr struct {
+	Listen    string
+	MirrorMap map[string]string
+	GoPath    string
+}
+
+var confData confStr
 
 func init() {
-	flag.StringVar(&listen, "listen", "0.0.0.0:8081", "service listen address")
-	flag.StringVar(&config_file, "f", "/data/goproxy.conf", "config file")
+	flag.StringVar(&configFile, "f", "/data/goproxy.conf", "config file")
 	flag.Parse()
 }
 
@@ -44,45 +47,61 @@ func (jst *JsonStruct) Load(filename string, v interface{}) error {
 		return err
 	}
 
+	fmt.Fprintf(os.Stdout, "conf: %s\n", data)
 	//读取的数据为json格式，需要进行解码
 	err = json.Unmarshal(data, v)
 	if err != nil {
 		fmt.Printf("json uncode fail, error:%v\n", err)
 		return err
 	}
+	fmt.Fprintf(os.Stdout, "%v\n", v)
 	return nil
 }
 
 func main() {
+	jStruct := NewJsonStruct()
+	fmt.Printf("config file %s\n", configFile)
+	err := jStruct.Load(configFile, &confData)
+	if err != nil {
+		panic("load config error")
+	}
+	fmt.Printf("confData: %v\n", confData)
+	fmt.Printf("mirrorMap, %v\n", confData.MirrorMap)
+	fmt.Printf("listen: %s\n", confData.Listen)
+	fmt.Printf(": %s\n", confData.Listen)
 	//需要设置一下GO111MODULE
 	os.Setenv("GO111MODULE", "on")
 
-	gpEnv := os.Getenv("GOPATH")
-	if gpEnv == "" {
-		panic("can not find $GOPATH")
+	var gopath string
+	if confData.GoPath == "" {
+		gpEnv := os.Getenv("GOPATH")
+		if gpEnv == "" {
+			panic("can not find $GOPATH")
+		}
+		fmt.Fprintf(os.Stdout, "goproxy: %s inited.\n", time.Now().Format("2006-01-02 15:04:05"))
+		gp := filepath.SplitList(gpEnv)
+		gopath = gp[0]
+	} else {
+		gopath = confData.GoPath
+		os.Setenv("GOPATH", gopath)
 	}
-	fmt.Fprintf(os.Stdout, "goproxy: %s inited.\n", time.Now().Format("2006-01-02 15:04:05"))
-	gp := filepath.SplitList(gpEnv)
-	cacheDir = filepath.Join(gp[0], "pkg", "mod", "cache", "download")
+	//gopath如果没有建一个
+	if _, err := os.Stat(gopath); os.IsNotExist(err) {
+		os.MkdirAll(gopath, 0755)
+	}
+
+	cacheDir = filepath.Join(gopath, "pkg", "mod", "cache", "download")
 	if _, err := os.Stat(cacheDir); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stdout, "goproxy: %s cache dir is not exist. %s\n", time.Now().Format("2006-01-02 15:04:05"), cacheDir)
 		//os.MkdirAll(cacheDir, 0644)
 	}
-	go_path = gp[0]
 
-	j_struct := NewJsonStruct()
-	fmt.Printf("config file %s\n", config_file)
-	err := j_struct.Load(config_file, &mirror_map)
-	if err != nil {
-		panic("load config error")
-	}
-	fmt.Println(mirror_map)
 	//一定要GOPROXY设置为空
 	os.Setenv("GOPROXY", "")
 	//读取配置
 
 	http.Handle("/", mainHandler(http.FileServer(http.Dir(cacheDir))))
-	err = http.ListenAndServe(listen, nil)
+	err = http.ListenAndServe(confData.Listen, nil)
 	if nil != err {
 		panic(err)
 	}
@@ -139,14 +158,14 @@ func mainHandler(inner http.Handler) http.Handler {
 
 func goGet(path, version, suffix string, w http.ResponseWriter, r *http.Request) error {
 	//replace path
-	r_path := path
-	for origin_path, dest_path := range mirror_map {
-		if strings.Index(path, origin_path) != -1 {
-			r_path = strings.Replace(path, origin_path, dest_path.(string), 1)
-			fmt.Fprintf(os.Stdout, "mirror path: %s mirror %s\n", path, r_path)
+	rPath := path
+	for originPath, destPath := range confData.MirrorMap {
+		if strings.Index(path, originPath) != -1 {
+			rPath = strings.Replace(path, originPath, destPath, 1)
+			fmt.Fprintf(os.Stdout, "mirror path: %s mirror %s\n", path, rPath)
 		}
 	}
-	cmd := exec.Command("go", "get", "-d", r_path+"@"+version)
+	cmd := exec.Command("go", "get", "-d", rPath+"@"+version)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -172,7 +191,7 @@ func goGet(path, version, suffix string, w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := cmd.Wait(); err != nil {
-		fmt.Fprintf(os.Stderr, "goproxy: download %s stderr:\n%s", r_path, string(bytesErr))
+		fmt.Fprintf(os.Stderr, "goproxy: download %s stderr:\n%s", rPath, string(bytesErr))
 		return err
 	}
 	out := fmt.Sprintf("%s", bytesErr)
@@ -182,7 +201,7 @@ func goGet(path, version, suffix string, w http.ResponseWriter, r *http.Request)
 		if len(f) != 4 {
 			continue
 		}
-		if f[1] == "downloading" && f[2] == r_path && f[3] != version && suffix != "" {
+		if f[1] == "downloading" && f[2] == rPath && f[3] != version && suffix != "" {
 			h := r.Host
 			mod := strings.Split(r.URL.Path, "/@v/")
 			p := fmt.Sprintf("%s/@v/%s%s", mod[0], f[3], suffix)
@@ -194,9 +213,9 @@ func goGet(path, version, suffix string, w http.ResponseWriter, r *http.Request)
 			http.Redirect(w, r, url, 302)
 		}
 	}
-	if strings.Compare(r_path, path) != 0 {
-		r1 := filepath.Join(go_path, "pkg", "mod", r_path)
-		d1 := filepath.Join(go_path, "pkg", "mod", path)
+	if strings.Compare(rPath, path) != 0 {
+		r1 := filepath.Join(confData.GoPath, "pkg", "mod", rPath)
+		d1 := filepath.Join(confData.GoPath, "pkg", "mod", path)
 		os.Link(r1, d1)
 		fmt.Fprintf(os.Stdout, "link dir  %s -->  %s\n", r1, d1)
 	}
