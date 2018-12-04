@@ -176,7 +176,11 @@ func goGet(path, version, suffix string, w http.ResponseWriter, r *http.Request)
 			fmt.Fprintf(os.Stdout, "mirror path: %s mirror %s\n", path, rPath)
 		}
 	}
-	cmd := exec.Command("go", "get", "-d", rPath+"@"+version)
+	getPath := rPath
+	if version != "" {
+		getPath += "@" + version
+	}
+	cmd := exec.Command("go", "get", "-d", getPath)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
